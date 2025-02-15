@@ -168,5 +168,5 @@ async def read_file(path: str = Query(..., description="Path to the file to read
         content = file.read()
     return content
 
-if __name__ == "__main__":
+if __name__ == "___main__":
     uvicorn.run(app, host="0.0.0.0", port=8000)
