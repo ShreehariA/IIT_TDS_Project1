@@ -1,306 +1,157 @@
+# /// script
+# dependencies = [
+#   "fastapi",
+#   "requests",
+#   "python-dotenv",
+#   "uvicorn",
+#   "python-dotenv",
+#   "beautifulsoup4",
+#   "markdown",
+#   "requests<3",
+#   "duckdb",
+#   "numpy",
+#   "python-dateutil",
+#   "docstring-parser",
+#   "httpx",
+#   "pydantic",
+# ]
+# ///
 import uvicorn
-from fastapi import FastAPI, HTTPException
-from fastapi.middleware.cors import CORSMiddleware
-import requests
-import os
+import traceback
 import json
-import subprocess
-from typing import List, Dict, Tuple
-import re
-from pathlib import Path
+from dotenv import load_dotenv
+import requests
+from fastapi import FastAPI, HTTPException, Query
+from fastapi.responses import PlainTextResponse
+import os
+import logging
+from typing import Dict, Callable
+from tasks import (
+format_file_with_prettier,
+convert_function_to_openai_schema,
+query_gpt,
+query_gpt_image, 
+query_database, 
+extract_specific_text_using_llm, 
+get_embeddings, 
+get_similar_text_using_embeddings, 
+extract_text_from_image, 
+extract_specific_content_and_create_index, 
+process_and_write_logfiles, 
+sort_json_by_keys, 
+count_occurrences, 
+install_and_run_script
+)
+
+
+load_dotenv()
+APIPROXY_TOKEN = os.getenv("APIPROXY_TOKEN")
+GPT_URL = "https://aiproxy.sanand.workers.dev/openai/v1/chat/completions"
 
 app = FastAPI()
 
-app.add_middleware(
-    CORSMiddleware,
-    allow_origins=["*"],
-    allow_credentials=True,
-    allow_methods=["GET", "POST"],
-    allow_headers=["*"]
-)
+RUNNING_IN_CODESPACES = "CODESPACES" in os.environ
+RUNNING_IN_DOCKER = os.path.exists("/.dockerenv")
+logging.basicConfig(level=logging.INFO)
 
-APIPROXY_TOKEN = os.getenv("APIPROXY_TOKEN")
-
-tools = [
-    {
-        "type": "function",
-        "function": {
-            "name": "script_runner",
-            "description": "Install a package and run a script from a URL with provided arguments.",
-            "parameters": {
-                "type": "object",
-                "properties": {
-                    "script_url": {
-                        "type": "string",
-                        "description": "The URL of the script to run."
-                    },
-                    "args": {
-                        "type": "array",
-                        "items": {
-                            "type": "string"
-                        },
-                        "description": "List of arguments to pass to the script"
-                    }
-                },
-                "required": ["script_url", "args"]
-            }
-        }
-    },
-    {
-        "type": "function",
-        "function": {
-            "name": "task_runner",
-            "description": "Execute Python code with specified dependencies.",
-            "parameters": {
-                "type": "object",
-                "properties": {
-                    "code": {
-                        "type": "string",
-                        "description": "Python code to execute"
-                    },
-                    "dependencies": {
-                        "type": "array",
-                        "items": {
-                            "type": "string"
-                        },
-                        "description": "List of Python package dependencies"
-                    }
-                },
-                "required": ["code", "dependencies"]
-            }
-        }
-    }
-]
-
-def is_safe_path(path: str) -> bool:
-    """Ensure path is within /data directory"""
-    path = os.path.abspath(path)
-    data_dir = os.path.abspath("/data")
-    return path.startswith(data_dir)
-
-def parse_error_message(error: str) -> Tuple[str, str]:
-    """Parse error message to extract relevant information for code regeneration"""
-    syntax_pattern = r"SyntaxError: (.*)"
-    import_pattern = r"ModuleNotFoundError: No module named '(.*)'"
-    index_pattern = r"IndexError: (.*)"
-    key_pattern = r"KeyError: (.*)"
-    attribute_pattern = r"AttributeError: (.*)"
+def ensure_local_path(path: str) -> str:
+    """Ensure the path uses './data/...' locally, but '/data/...' in Docker."""
+    if ((not RUNNING_IN_CODESPACES) and RUNNING_IN_DOCKER): 
+        print("IN HERE",RUNNING_IN_DOCKER) # If absolute Docker path, return as-is :  # If absolute Docker path, return as-is
+        return path
     
-    error_patterns = {
-        "SyntaxError": syntax_pattern,
-        "ImportError": import_pattern,
-        "IndexError": index_pattern,
-        "KeyError": key_pattern,
-        "AttributeError": attribute_pattern
-    }
-    
-    error_type = next((et for et in error_patterns.keys() if et in error), "Unknown")
-    
-    if error_type in error_patterns:
-        match = re.search(error_patterns[error_type], error)
-        error_details = match.group(1) if match else error
     else:
-        error_details = error
-    
-    return error_type, error_details
+        logging.info(f"Inside ensure_local_path with path: {path}")
+        return path.lstrip("/")  
 
-call_count = 0
-def execute_llm_code(code: str, dependencies: List[str]) -> Dict:
-    """Execute code generated by LLM with specified dependencies and error handling"""
-    global call_count
-    call_count += 1
-    
-    script_name = f"llm_code_{call_count}.py"
-    llm_code = f"""#!/usr/bin/env python
-    # requires-python = ">=3.11"
-    # dependencies = [{', '.join(f'"{dep}"' for dep in dependencies)}]
+function_mappings: Dict[str, Callable] = {
+"install_and_run_script": install_and_run_script, 
+"format_file_with_prettier": format_file_with_prettier,
+"query_database":query_database, 
+"extract_specific_text_using_llm":extract_specific_text_using_llm, 
+'get_similar_text_using_embeddings':get_similar_text_using_embeddings, 
+'extract_text_from_image':extract_text_from_image, 
+"extract_specific_content_and_create_index":extract_specific_content_and_create_index, 
+"process_and_write_logfiles":process_and_write_logfiles, 
+"sort_json_by_keys":sort_json_by_keys, 
+"count_occurrences":count_occurrences,
 
-{code.strip()}
-"""
+}
 
-    try:
-        with open(script_name, "w") as f:
-            f.write(llm_code)
-        
-        output = subprocess.run(
-            ["uv", "run", script_name],
-            capture_output=True,
-            text=True,
-            cwd=os.getcwd()
-        )
-        
-        if output.returncode != 0:
-            raise Exception(output.stderr)
-            
-        return {"status": "success", "output": output.stdout}
-    
-    except Exception as e:
-        return {"status": "error", "error": str(e)}
-    # finally:
-    #     # Clean up the temporary script file
-    #     if os.path.exists(script_name):
-    #         os.remove(script_name)
-
-def handle_code_error(error: str, original_task: str) -> Dict:
-    """Handle code execution errors by requesting fixed code from LLM"""
-    error_type, error_details = parse_error_message(error)
-    
-    url = "https://aiproxy.sanand.workers.dev/openai/v1/chat/completions"
-    
-    headers = {
-        "Content-type": "application/json",
-        "Authorization": f"Bearer {APIPROXY_TOKEN}"
-    }
-    
-    error_prompt = f"""
-    The previous code generated for this task failed with the following error:
-    Error Type: {error_type}
-    Error Details: {error_details}
-    
-    Original Task: {original_task}
-    
-    Please generate new code that fixes this error. Make sure to:
-    1. Handle the specific error case identified
-    2. Include proper error handling
-    3. Verify all dependencies are correctly specified
-    4. Use proper syntax and avoid common pitfalls
-    5. Ensure proper file operations within /data directory
-    
-    Respond using the task_runner tool with the corrected code.
-    """
-    
-    data = {
-        "model": "gpt-4o-mini",
-        "messages": [
-            {
-                "role": "user",
-                "content": error_prompt
+def parse_task_description(task_description: str,tools: list):
+    response = requests.post(
+        GPT_URL,
+        headers={
+            "Authorization": f"Bearer {APIPROXY_TOKEN}",
+            "Content-Type": "application/json"
             },
-            {
-                "role": "system",
-                "content": "You are a code correction assistant. Generate fixed code that addresses the specific error encountered."
-            }
-        ],
-        "tools": tools,
-        "tool_choice": "auto"
-    }
-    
+        json={
+            "model": "gpt-4o-mini",
+            "messages": [{
+                        'role': 'system',
+                        'content':"You are intelligent agent that understands and parses tasks. You quickly identify the best tool functions to use to give the desired results"
+                            },
+                            {
+                            "role": "user",
+                            "content": task_description
+                            }],
+                            "tools": tools,
+                            "tool_choice":"required",
+                }
+                     )
+    return response.json()["choices"][0]["message"]
+
+def execute_function_call(function_call):
+    logging.info(f"Inside execute_function_call with function_call: {function_call}")
     try:
-        response = requests.post(url=url, headers=headers, json=data)
-        tool_call = response.json()["choices"][0]["message"]["tool_calls"][0]
-        
-        if tool_call["function"]["name"] == "task_runner":
-            arguments = json.loads(tool_call["function"]["arguments"])
-            return execute_llm_code(arguments['code'], arguments['dependencies'])
+        function_name = function_call["name"]
+        function_args = json.loads(function_call["arguments"])
+        function_to_call = function_mappings.get(function_name)
+        logging.info("PRINTING RESPONSE:::"*3)
+        print('Calling function:', function_name)
+        print('Arguments:', function_args)
+        if function_to_call:
+            function_to_call(**function_args)
         else:
-            return {"status": "error", "error": "Invalid tool selected for error correction"}
-    
+            raise ValueError(f"Function {function_name} not found")
     except Exception as e:
-        return {"status": "error", "error": f"Error during code regeneration: {str(e)}"}
+        error_details = traceback.format_exc()
+        raise HTTPException(status_code=500, 
+                            detail=f"Error executing function in execute_function_call: {str(e)}",
+                            headers={"X-Traceback": error_details}
+                            )
 
 @app.get("/")
 def home():
-    return {"message": "Welcome to TDS."}
-
-@app.get("/read")
-def read_file(path: str):
-    """Safely read file content if within /data directory"""
-    if not is_safe_path(path):
-        raise HTTPException(status_code=403, detail="Access denied: Can only access files in /data directory")
-    try:
-        with open(path, "r") as f:
-            return f.read()
-    except Exception as e:
-        raise HTTPException(status_code=404, detail=f"Error reading file: {str(e)}")
+    return {"message": "Welcome to 23ds3000002 project."}
 
 @app.post("/run")
-def run_task(task: str):
-    url = "https://aiproxy.sanand.workers.dev/openai/v1/chat/completions"
-    
-    headers = {
-        "Content-type": "application/json",
-        "Authorization": f"Bearer {APIPROXY_TOKEN}"
-    }
-
-    data = {
-        "model": "gpt-4o-mini",
-        "messages": [
-            {
-                "role": "user",
-                "content": task
-            },
-            {
-                "role": "system",
-                "content": """
-                You are an assistant who handles various file processing tasks. Analyze the task and:
-
-                1. For running external scripts (like datagen.py), use script_runner tool with:
-                   - Direct URL to the script
-                   - Required arguments as a list
-                
-                2. For tasks that need file processing (like counting dates, sorting JSON, etc.), 
-                   use task_runner and:
-                   - Include all necessary imports (pandas, datetime, json, etc.)
-                   - Read input files using standard Python file operations
-                   - Process the content as required
-                   - Write output to the specified file
-                   - Add proper error handling
-                   - Specify all required dependencies
-                
-                Important rules:
-                - Only access files in the /data directory
-                - Never delete any files
-                - For file tasks, use basic Python file operations (open, read, write)
-                - Handle file paths safely
-                - Include all necessary dependencies in task_runner
-                - Use proper error handling for all operations
-                - Process files in a memory-efficient way for large files
-                
-                Common dependencies to include when needed:
-                - pandas for data processing
-                - python-dateutil for date handling
-                - Pillow for image processing
-                - sqlite3 for database operations
-                """
-            }
-        ],
-        "tools": tools,
-        "tool_choice": "auto"
-    }
-
+async def run_task(task: str = Query(..., description="Plain-English task description")):
+    tools = [convert_function_to_openai_schema(func) for func in function_mappings.values()]
+    logging.info(len(tools))
+    logging.info(f"Inside run_task with task: {task}")
     try:
-        response = requests.post(url=url, headers=headers, json=data)
-        response.raise_for_status()
-        
-        tool_call = response.json()["choices"][0]["message"]["tool_calls"][0]
-        arguments = json.loads(tool_call["function"]["arguments"])
-        
-        if tool_call["function"]["name"] == "script_runner":
-            script_url = arguments['script_url']
-            args = arguments['args']
-            if not script_url.startswith('http'):
-                return {"status": "error", "error": "Invalid script URL"}
-            command = ["uv", "run", script_url] + args
-            result = subprocess.run(command, capture_output=True, text=True, cwd=os.getcwd())
-            return {"status": "success", "output": result.stdout}
-        
-        elif tool_call["function"]["name"] == "task_runner":
-            result = execute_llm_code(arguments['code'], arguments['dependencies'])
-            
-            if result["status"] == "error":
-                return handle_code_error(result["error"], task)
-                
-            return result
-        
-        else:
-            return {"status": "error", "error": "Invalid tool selected"}
-            
-    except requests.exceptions.RequestException as e:
-        return {"status": "error", "error": f"API request failed: {str(e)}"}
-    except json.JSONDecodeError as e:
-        return {"status": "error", "error": f"Invalid JSON response: {str(e)}"}
+        function_call_response_message = parse_task_description(task,tools) #returns  message from response
+        if function_call_response_message["tool_calls"]:
+            for tool in function_call_response_message["tool_calls"]:
+                execute_function_call(tool["function"])
+        return {"status": "success", "message": "Task executed successfully"}
     except Exception as e:
-        return {"status": "error", "error": f"Unexpected error: {str(e)}"}
+        error_details = traceback.format_exc()
+        raise HTTPException(status_code=500, 
+                            detail=f"Error executing function in run_task: {str(e)}",
+                            headers={"X-Traceback": error_details}
+                            )
+
+@app.get("/read",response_class=PlainTextResponse)
+async def read_file(path: str = Query(..., description="Path to the file to read")):
+    logging.info(f"Inside read_file with path: {path}")
+    output_file_path = ensure_local_path(path)
+    if not os.path.exists(output_file_path):
+        raise HTTPException(status_code=500, detail=f"Error executing function in read_file (GET API")
+    with open(output_file_path, "r") as file:
+        content = file.read()
+    return content
 
 if __name__ == "__main__":
     uvicorn.run(app, host="0.0.0.0", port=8000)

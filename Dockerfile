@@ -1,27 +1,47 @@
-FROM python:3.12-slim-bookworm 
+# Use the Alpine-based image with Python 3.9 and Node.js 14
+# FROM nikolaik/python-nodejs:python3.9-nodejs14-alpine
+# # Set environment variables to prevent Python from writing .pyc files and to buffer stdout and stderr
 
-# Install required dependencies
-RUN apt-get update && apt-get install -y --no-install-recommends curl ca-certificates nodejs npm
+# Use Debian-based slim Python image
+FROM python:3.11-slim
 
-# Install specific version of Prettier
-RUN npm install -g prettier@3.4.2
+ENV PYTHONDONTWRITEBYTECODE=1
+ENV PYTHONUNBUFFERED=1
 
-# Download the latest installer
-ADD https://astral.sh/uv/install.sh /uv-installer.sh
+# Set the working directory in the container
+WORKDIR /src
 
-# Run the installer then remove it
-RUN sh /uv-installer.sh && rm /uv-installer.sh
+RUN pip install --upgrade pip setuptools wheel
 
-# Ensure the installed binary is on the `PATH`
-ENV PATH="/root/.local/bin/:$PATH"
+# Install system dependencies required for libraries
+RUN apt-get update && apt-get install -y --no-install-recommends \
+    gcc \
+    g++ \
+    make \
+    libffi-dev \
+    musl-dev \
+    libopenblas-dev \
+    sqlite3 \
+    libsqlite3-dev \
+    libmagic-dev \
+    tesseract-ocr \
+    curl \
+    git \
+    nodejs \
+    npm \
+    && rm -rf /var/lib/apt/lists/*
 
-# Copy application files
-WORKDIR /app
-COPY src/hello.py /app/
-COPY requirements.txt /app/
+# Install Prettier globally
+RUN npm install -g prettier
 
-# Install dependencies using uv
-RUN uv pip install --system -r requirements.txt
+# Copy the FastAPI application code into the container
+COPY src /src
 
-# Run the application
-CMD ["uv", "run", "hello.py"]
+# Install uv
+RUN pip install uv
+
+# Expose the port that the app runs on
+EXPOSE 8000
+
+# Command to run the application
+CMD ["uv", "run", "main.py"]
