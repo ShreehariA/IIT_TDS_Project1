@@ -40,7 +40,15 @@ extract_specific_content_and_create_index,
 process_and_write_logfiles, 
 sort_json_by_keys, 
 count_occurrences, 
-install_and_run_script
+install_and_run_script,
+fetch_data_from_api_and_save,
+clone_git_repo_and_commit,
+run_sql_query_on_database,
+scrape_webpage,
+compress_image,
+transcribe_audio,
+convert_markdown_to_html,
+filter_csv
 )
 
 
@@ -75,7 +83,14 @@ function_mappings: Dict[str, Callable] = {
 "process_and_write_logfiles":process_and_write_logfiles, 
 "sort_json_by_keys":sort_json_by_keys, 
 "count_occurrences":count_occurrences,
-
+"fetch_data_from_api_and_save": fetch_data_from_api_and_save,
+"clone_git_repo_and_commit": clone_git_repo_and_commit,
+"run_sql_query_on_database": run_sql_query_on_database,
+"scrape_webpage": scrape_webpage,
+"compress_image": compress_image,
+"transcribe_audio": transcribe_audio,
+"convert_markdown_to_html": convert_markdown_to_html,
+"filter_csv": filter_csv
 }
 
 def parse_task_description(task_description: str,tools: list):
