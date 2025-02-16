@@ -10,12 +10,12 @@ Docker Hub Repository: [shreeharia/iitm_tds_project1](https://hub.docker.com/rep
 
 ### Build Docker Image
 ```sh
-docker buildx build -t tds_p1_v1 .
+docker buildx build -t repo:tag .
 ```
 
 ### Run Docker Container
 ```sh
-docker run -e APIPROXY_TOKEN=token -p 8000:8000 tds_p1_v1
+docker run -e APIPROXY_TOKEN=token -p 8000:8000 repo:tag
 ```
 
 ### View Docker Logs
