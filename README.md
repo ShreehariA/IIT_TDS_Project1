@@ -1,7 +1,7 @@
 # IIT_TDS_Project1
 
 ## Contact
-IITM Mail ID: 23ds3000002@ds.study.iitm.ac.in (shreeharianbazhagan@gamil.com)
+IITM Mail ID: 23ds3000002@ds.study.iitm.ac.in
 
 ## Docker Repository
 Docker Hub Repository: [shreeharia/iitm_tds_project1](https://hub.docker.com/repository/docker/shreeharia/iitm_tds_project1/tags)
